@@ -70,12 +70,17 @@ class Problem(object):
         if SNR is None:
             SNR = self.SNR
         y   = np.matmul (self.A, x)
-        std = np.std (y, axis=0) * np.power (10.0, -SNR/20.0)
+
+        M, N = p.A.shape
+        noise_var = p.pnz * N / M * np.pow(10., -SNR / 10.)
+
+        noise_std = np.sqrt(noise_var)
+
         ## The following line is for the compatibility for older versions of
         ## `Numpy` pacakge where the `scale` parameter in `np.randon.normal`
         ## is not allowed to be zero.
-        std = np.maximum (std, 10e-50)
-        noise = np.random.normal (size=y.shape , scale=std).astype (np.float32)
+        noise_std = np.maximum (noise_std, 10e-50)
+        noise = np.random.normal (size=y.shape , scale=noise_std).astype (np.float32)
 
         return y + noise
 

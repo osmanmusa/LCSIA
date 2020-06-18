@@ -41,8 +41,16 @@ net_arg.add_argument(
     '-maxp', '--max_percent', type=float, default=0.0,
     help="Maximum percentage of entries to be selectedas support in each layer.")
 net_arg.add_argument(
+    '-sn', '--shrink_name', type=str, default="soft",
+    help="Shrinkage function name of the model.")
+net_arg.add_argument(
     '-l', '--lam', type=float, default=0.4,
     help="Initial lambda in LISTA solvers.")
+# net_arg.add_argument(
+#     # has the same funciton as --lam. One could use lam as well, but appropriate change in corresponding
+#     # L something AMP file needs to be made
+#     '-theta', '--theta', type=float, default=(1.0, 1.0),
+#     help="Initial theta in LAMP solvers.")
 net_arg.add_argument(
     '-u', '--untied', action='store_true',
     help="Whether weights are untied between layers.")

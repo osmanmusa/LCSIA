@@ -15,6 +15,8 @@ import numpy as np
 
 from utils.data import bsd500_cs_inputs
 
+import time
+
 
 def setup_input_sc(test, p, tbs, vbs, fixval, supp_prob, SNR,
                    magdist, **distargs):
@@ -32,44 +34,44 @@ def setup_input_sc(test, p, tbs, vbs, fixval, supp_prob, SNR,
         prob_ = tf.constant(value=supp_prob, dtype=tf.float32, name='prob')
 
         """Sample supports."""
-        supp_ = tf.random_uniform(shape=(N, tbs), minval=0.0, maxval=1.0,
+        supp_ = tf.random.uniform(shape=(N, tbs), minval=0.0, maxval=1.0,
                                   name='supp')
-        supp_ = tf.to_float(supp_ <= prob_)
+        supp_ = tf.compat.v1.to_float(supp_ <= prob_)
 
         if not test:
-            supp_val_ = tf.random_uniform(shape=(N, vbs),
+            supp_val_ = tf.random.uniform(shape=(N, vbs),
                                           minval=0.0, maxval=1.0,
                                           dtype=tf.float32, name='supp_val')
-            supp_val_ = tf.to_float(supp_val_ <= prob_)
+            supp_val_ = tf.compat.v1.to_float(supp_val_ <= prob_)
 
         """Sample magnitudes."""
         if magdist == 'normal':
-            mag_ = tf.random_normal(shape=(N, tbs),
+            mag_ = tf.random.normal(shape=(N, tbs),
                                     mean=distargs['mean'],
                                     stddev=distargs['std'],
                                     dtype=tf.float32,
                                     name='mag')
             if not test:
-                mag_val_ = tf.random_normal (shape=(N, vbs),
+                mag_val_ = tf.random.normal (shape=(N, vbs),
                                              mean=distargs ['mean'],
                                              stddev=distargs ['std'],
                                              dtype=tf.float32,
                                              name='mag')
         elif magdist == 'bernoulli':
-            mag_ = (tf.random_uniform(shape=(N, tbs), minval=0.0, maxval=1.0,
+            mag_ = (tf.random.uniform(shape=(N, tbs), minval=0.0, maxval=1.0,
                                       dtype=tf.float32)
                     <= distargs['p'])
-            mag_ = (tf.to_float (mag_) * distargs ['v0'] +
-                    tf.to_float (tf.logical_not (mag_)) * distargs ['v1'])
+            mag_ = (tf.compat.v1.to_float (mag_) * distargs ['v0'] +
+                    tf.compat.v1.to_float (tf.logical_not (mag_)) * distargs ['v1'])
 
             if not test:
-                mag_val_ = (tf.random_uniform (shape=(N, vbs),
+                mag_val_ = (tf.random.uniform (shape=(N, vbs),
                                                minval=0.0, maxval=1.0,
                                                dtype=tf.float32)
                             <= distargs ['p'])
-                mag_val_ = (tf.to_float (mag_val_)
+                mag_val_ = (tf.compat.v1.to_float (mag_val_)
                                 * distargs ['v0'] +
-                            tf.to_float (tf.logical_not (mag_val_))
+                            tf.compat.v1.to_float (tf.logical_not (mag_val_))
                                 * distargs ['v1'])
 
 
@@ -81,25 +83,24 @@ def setup_input_sc(test, p, tbs, vbs, fixval, supp_prob, SNR,
         y_  = tf.matmul (kA_, x_)
 
         """Add noise with SNR."""
-        std_ = (tf.sqrt (tf.nn.moments (y_, axes=[0], keep_dims=True) [1])
-                    * np.power (10.0, -SNR/20.0))
-        noise_ = tf.random_normal (shape=tf.shape (y_), stddev=std_,
+        noise_var = p.pnz * N / M * np.power(10., -SNR / 10.)
+        noise_std = np.sqrt(noise_var)
+
+        noise_ = tf.random.normal (shape=tf.shape (y_), stddev=noise_std,
                                    dtype=tf.float32, name='noise')
         y_ = y_ + noise_
 
         if not test and fixval:
             x_val_ = supp_val_ * mag_val_
             y_val_ = tf.matmul (kA_, x_val_)
-            std_val_ = (
-                tf.sqrt (tf.nn.moments (y_val_, axes=[0], keep_dims=True) [1])
-                * np.power (10.0, -SNR/20.0))
-            noise_val_ = tf.random_normal (shape=tf.shape (y_val_),
-                                           stddev=std_val_, dtype=tf.float32,
+
+            noise_val_ = tf.random.normal (shape=tf.shape (y_val_),
+                                           stddev=noise_std, dtype=tf.float32,
                                            name='noise_val')
             y_val_ = y_val_ + noise_val_
             if fixval:
-                x_val_ = tf.get_variable (name='label_val', initializer=x_val_)
-                y_val_ = tf.get_variable (name='input_val', initializer=y_val_)
+                x_val_ = tf.compat.v1.get_variable(name='label_val', initializer=x_val_)
+                y_val_ = tf.compat.v1.get_variable(name='input_val', initializer=y_val_)
 
         """In the order of `input_, label_, input_val_, label_val_`."""
         if not test:
@@ -141,7 +142,7 @@ def setup_input_robust(A, pmax_sigma, msigma, pnz, bs_A, bs_x):
     # x_ has the shape (n, bs_x)
     bernoulli_ = tf.random_uniform(shape=(n, bs_x), minval=0, maxval=1,
                                    dtype=tf.float32)
-    support_ = tf.to_float(bernoulli_ <= pnz)
+    support_ = tf.compat.v1.to_float(bernoulli_ <= pnz)
     magnitude_ = tf.random_normal(shape=(n, bs_x), mean=0, stddev=1.0,
                                   dtype=tf.float32)
     x_ = tf.multiply(support_, magnitude_)
@@ -158,8 +159,11 @@ def setup_input_robust(A, pmax_sigma, msigma, pnz, bs_A, bs_x):
 
     return A_perturbed_, y_, x_
 
+def mse_loss_function(x_hat, x_true):
+    # print("x_true=",x_true)
+    return tf.nn.l2_loss ( x_hat - x_true)
 
-def setup_sc_training (model, y_, x_, y_val_, x_val_, x0_,
+def setup_sc_training (model, data_set, x0_,
                        init_lr, decay_rate, lr_decay):
     """TODO: Docstring for setup_training.
 
@@ -177,12 +181,6 @@ def setup_sc_training (model, y_, x_, y_val_, x_val_, x0_,
     """
 
     """Inference."""
-    xhs_     = model.inference (y_    , x0_)
-    xhs_val_ = model.inference (y_val_, x0_)
-
-    nmse_denom_     = tf.nn.l2_loss (x_)
-    nmse_denom_val_ = tf.nn.l2_loss (x_val_)
-
     # start setting up training
     training_stages = []
 
@@ -191,7 +189,7 @@ def setup_sc_training (model, y_, x_, y_val_, x_val_, x0_,
     # setup lr_multiplier dictionary
     # learning rate multipliers of each variables
     lr_multiplier = dict()
-    for var in tf.trainable_variables():
+    for var in tf.compat.v1.trainable_variables():
         lr_multiplier[var.op.name] = 1.0
 
     # initialize train_vars list
@@ -203,19 +201,27 @@ def setup_sc_training (model, y_, x_, y_val_, x_val_, x0_,
         layer_info = "{scope} T={time}".format (scope=model._scope, time=t+1)
 
         # set up loss_ and nmse_
-        loss_ = tf.nn.l2_loss (xhs_ [t+1] - x_)
-        nmse_ = loss_ / nmse_denom_
-        loss_val_ = tf.nn.l2_loss (xhs_val_ [t+1] - x_val_)
-        nmse_val_ = loss_val_ / nmse_denom_val_
+        # loss_ = tf.nn.l2_loss (xhs_ [t+1] - x_)
+        # loss_ = lambda: tf.nn.l2_loss ( model.inference (y_, x0_) [t+1] - x_)
+        loss_ = lambda: mse_loss_function(model.inference (data_set.y_, x0_) [t+1], data_set.x_)
+        # nmse_ = tf.nn.l2_loss (xhs_ [t+1] - x_) / nmse_denom_
+        nmse_ = lambda: tf.nn.l2_loss ( model.inference (data_set.y_, x0_) [t+1] - data_set.x_)/tf.nn.l2_loss (data_set.x_)
+
+        # loss_val_ = tf.nn.l2_loss (xhs_val_ [t+1] - x_val_)
+        loss_val_ = lambda: tf.nn.l2_loss (model.inference (data_set.y_val_, x0_) [t+1] - data_set.x_val_)
+
+        # nmse_val_ = loss_val_ / nmse_denom_val_
+        nmse_val_ = lambda: tf.nn.l2_loss (model.inference (data_set.y_val_, x0_) [t+1] - data_set.x_val_)/tf.nn.l2_loss (data_set.x_val_)
 
         var_list = tuple([var for var in model.vars_in_layer [t]
-                               if var not in train_vars])
+                               if var.name not in [train_var.name for train_var in train_vars]])
 
         # First only train the variables in the `var_list` in current layer.
-        op_ = tf.train.AdamOptimizer (init_lr).minimize (loss_,
-                                                         var_list=var_list)
+        opt_ = tf.keras.optimizers.Adam(learning_rate=init_lr)
+        # op_ = tf.compat.v1.train.AdamOptimizer (init_lr).minimize (loss_,
+        #                                                  var_list=var_list)
         training_stages.append ((layer_info, loss_, nmse_,
-                                 loss_val_, nmse_val_, op_, var_list))
+                                 loss_val_, nmse_val_, opt_, var_list))
 
         for var in var_list:
             train_vars.append (var)
@@ -223,18 +229,22 @@ def setup_sc_training (model, y_, x_, y_val_, x_val_, x0_,
         # Train all variables in current and former layers with decayed
         # learning rate.
         for lr in lrs:
-            op_ = get_train_op (loss_, train_vars, lr, lr_multiplier)
-            training_stages.append ((layer_info + ' lr={}'.format (lr),
-                                     loss_,
-                                     nmse_,
-                                     loss_val_,
-                                     nmse_val_,
-                                     op_,
-                                     tuple (train_vars), ))
+            # op_ = get_train_op (loss_, train_vars, lr, lr_multiplier)
+            opt_ = tf.keras.optimizers.Adam(learning_rate=lr)
 
-        # decay learning rates for trained variables
-        for var in train_vars:
-            lr_multiplier [var.op.name] *= decay_rate
+            # training_stages.append ((layer_info + ' lr={}'.format (lr),
+            #                          loss_,
+            #                          nmse_,
+            #                          loss_val_,
+            #                          nmse_val_,
+            #                          op_,
+            #                          tuple (train_vars), ))
+            training_stages.append((layer_info + ' trainrate=' + "{:e}".format(lr), loss_, nmse_,
+                                    loss_val_, nmse_val_, opt_, tuple (train_vars)))
+
+        # # decay learning rates for trained variables
+        # for var in train_vars:
+        #     lr_multiplier [var.op.name] *= decay_rate
 
     return training_stages
 
@@ -436,85 +446,93 @@ def get_train_op (loss_, var_list, lr, lr_multiplier):
     return opt.apply_gradients (grads_vars_multiplied)
 
 
-def do_training (sess, stages, savefn, scope, val_step, maxit, better_wait):
-    """
-    Train the model actually.
-
-    :sess: Tensorflow session. Variables should be initialized or loaded from trained
-           model in this session.
-    :stages: Training stages info. ( name, xh_, loss_, nmse_, op_, var_list ).
-    :prob: Problem instance.
-    :batch_size: Batch size.
-    :val_step: How many steps between two validation.
-    :maxit: Max number of iterations in each training stage.
-    :better_wait: Jump to next training stage in advance if nmse_ no better after
-                  certain number of steps.
-    :done: name of stages that has been done.
-
-    """
-    if not savefn.endswith(".npz"):
-        savefn += ".npz"
-    if os.path.exists(savefn):
-        sys.stdout.write('Pretrained model found. Loading...\n')
-        state = load_trainable_variables(sess , savefn)
-    else:
-        state = {}
-
-    done = state.get('done', [])
-    log  = state.get('log', [])
-
-    # for name, loss_, nmse_, loss_val_, nmse_val_, op_, var_list in stages:
-    for name, loss_, nmse_, loss_val_, nmse_val_, op_, var_list in stages:
-        """Skip stage done already."""
-        if name in done:
-            sys.stdout.write('Already did {}. Skipping\n'.format(name))
-            continue
-
-        # print stage information
-        var_disc = 'fine tuning ' + ','.join([v.name for v in var_list])
-        print (name + ' ' + var_disc)
-
-        nmse_hist_val = []
-        for i in range (maxit+1):
-
-            _, loss_tr, nmse_tr = sess.run ([op_, loss_, nmse_])
-            db_tr = 10. * np.log10(nmse_tr)
-
-            if i % val_step == 0:
-                nmse_val, loss_val = sess.run ([nmse_val_, loss_val_])
-
-                if np.isnan (nmse_val):
-                    raise RuntimeError ('nmse is nan. exiting...')
-
-                nmse_hist_val = np.append (nmse_hist_val, nmse_val)
-                db_best_val = 10. * np.log10 (nmse_hist_val.min())
-                db_val = 10. * np.log10 (nmse_val)
-                sys.stdout.write(
-                        "\r| i={i:<7d} | loss_tr={loss_tr:.6f} | "
-                        "db_tr={db_tr:.6f}dB | loss_val ={loss_val:.6f} | "
-                        "db_val={db_val:.6f}dB | (best={db_best_val:.6f})"\
-                            .format(i=i, loss_tr=loss_tr, db_tr=db_tr,
-                                    loss_val=loss_val, db_val=db_val,
-                                    db_best_val=db_best_val))
-                sys.stdout.flush()
-                if i % (10 * val_step) == 0:
-                    age_of_best = (len(nmse_hist_val) -
-                                   nmse_hist_val.argmin() - 1)
-                    # If nmse has not improved for a long time, jump to the
-                    # next training stage.
-                    if age_of_best * val_step > better_wait:
-                        print('')
-                        break
-                if i % (100 * val_step) == 0:
-                    print('')
-
-        done = np.append (done , name)
-        # TODO: add log
-
-        state['done'] = done
-        state['log'] = log
-
-        save_trainable_variables(sess ,savefn, scope, **state)
+# def do_training (stages, data_set, savefn, scope, val_step, maxit, better_wait):
+#     """
+#     Train the model actually.
+#
+#     :sess: Tensorflow session. Variables should be initialized or loaded from trained
+#            model in this session.
+#     :stages: Training stages info. ( name, xh_, loss_, nmse_, op_, var_list ).
+#     :prob: Problem instance.
+#     :batch_size: Batch size.
+#     :val_step: How many steps between two validation.
+#     :maxit: Max number of iterations in each training stage.
+#     :better_wait: Jump to next training stage in advance if nmse_ no better after
+#                   certain number of steps.
+#     :done: name of stages that has been done.
+#
+#     """
+#     if not savefn.endswith(".npz"):
+#         savefn += ".npz"
+#     if os.path.exists(savefn):
+#         sys.stdout.write('Pretrained model found. Loading...\n')
+#         state = load_trainable_variables(savefn)
+#     else:
+#         state = {}
+#
+#     done = state.get('done', [])
+#     log  = state.get('log', [])
+#
+#     for name, loss_, nmse_, loss_val_, nmse_val_, opt_, var_list in stages:
+#         start = time.time()
+#         """Skip stage done already."""
+#         if name in done:
+#             sys.stdout.write('Already did {}. Skipping\n'.format(name))
+#             continue
+#
+#         # print stage information
+#         var_disc = 'fine tuning ' + ','.join([v.name for v in var_list])
+#         print (name + ' ' + var_disc)
+#
+#         nmse_hist_val = []
+#         for i in range (maxit+1):
+#
+#             data_set.update()
+#             # _, loss_tr, nmse_tr = sess.run ([op_, loss_, nmse_])
+#             opt_.minimize(loss=loss_, var_list=var_list)
+#             nmse_tr_dB = 10. * np.log10(nmse_())
+#             loss_tr = loss_()
+#
+#             if i % val_step == 0:
+#                 nmse_val = nmse_val_()
+#                 loss_val = loss_val_()
+#
+#                 if np.isnan (nmse_val):
+#                     raise RuntimeError ('nmse is nan. exiting...')
+#
+#                 nmse_hist_val = np.append (nmse_hist_val, nmse_val)
+#                 db_best_val = 10. * np.log10 (nmse_hist_val.min())
+#                 nmse_val_dB = 10. * np.log10 (nmse_val)
+#                 sys.stdout.write("\r| i={i:<7d} | loss_tr={loss_tr:.6f} | "
+#                         "nmse_tr/dB={nmse_tr_db:.6f} | loss_val ={loss_val:.6f} | "
+#                         "nmse_val/dB={nmse_val_db:.6f} | (best={db_best_val:.6f})"\
+#                             .format(i=i, loss_tr=loss_tr, nmse_tr_db=nmse_tr_dB,
+#                                     loss_val=loss_val, nmse_val_db=nmse_val_dB,
+#                                     db_best_val=db_best_val))
+#                 sys.stdout.flush()
+#                 if i % (10 * val_step) == 0:
+#                     age_of_best = (len(nmse_hist_val) -
+#                                    nmse_hist_val.argmin() - 1)
+#                     # If nmse has not improved for a long time, jump to the
+#                     # next training stage.
+#                     if age_of_best * val_step > better_wait:
+#                         print('')
+#                         break
+#                 if i % (100 * val_step) == 0:
+#                     print('')
+#
+#         done = np.append (done , name)
+#         # TODO: add log
+#
+#         end = time.time()
+#         time_log = 'Took me {totaltime:.3f} minutes, or {time_per_interation:.1f} ms per iteration'.format(
+#             totaltime=(end - start) / 60, time_per_interation=(end - start) * 1000 / i)
+#         print(time_log)
+#
+#         state['done'] = done
+#         state['log'] = log
+#
+#         save_trainable_variables(savefn, var_list, **state)
 
 
 def do_cs_training (sess, stages, prob,
@@ -968,53 +986,52 @@ def do_csjoint_training (sess, stages, prob, f_,
     return state
 
 
-def save_trainable_variables (sess, filename, scope, **kwargs):
-    """
-    Save trainable variables in the model to npz file with current value of
-    each variable in tf.trainable_variables().
+# def save_trainable_variables (filename, var_list, **kwargs):
+#     """
+#     Save trainable variables in the model to npz file with current value of
+#     each variable in tf.trainable_variables().
+#
+#     :sess: Tensorflow session.
+#     :filename: File name of saved file.
+#     :scope: Name of the variable scope that we want to save.
+#     :kwargs: Other arguments that we want to save.
+#
+#     """
+#     save = dict ()
+#     for v in var_list:
+#         save [str (v.name)] = v
+#
+#     # file name suffix check
+#     if not filename.endswith(".npz"):
+#         filename = filename + ".npz"
+#
+#     save.update (kwargs)
+#     np.savez (filename , **save)
 
-    :sess: Tensorflow session.
-    :filename: File name of saved file.
-    :scope: Name of the variable scope that we want to save.
-    :kwargs: Other arguments that we want to save.
 
-    """
-    save = dict ()
-    for v in tf.trainable_variables ():
-        if scope in v.name:
-            save [str (v.name)] = sess.run (v)
-
-    # file name suffix check
-    if not filename.endswith(".npz"):
-        filename = filename + ".npz"
-
-    save.update (kwargs)
-    np.savez (filename , **save)
-
-
-def load_trainable_variables (sess, filename):
-    """
-    Load trainable variables from saved file.
-
-    :sess: TODO
-    :filename: TODO
-    :returns: TODO
-
-    """
-    other = dict ()
-    # file name suffix check
-    if filename [-4:] != '.npz':
-        filename = filename + '.npz'
-    if not os.path.exists (filename):
-        raise ValueError (filename + ' not exists')
-
-    tv = dict ([(str(v.name), v) for v in tf.trainable_variables ()])
-    for k, d in np.load (filename).items ():
-        if k in tv:
-            print ('restoring ' + k)
-            sess.run (tf.assign (tv[k], d))
-        else:
-            other [k] = d
-
-    return other
+# def load_trainable_variables (filename):
+#     """
+#     Load trainable variables from saved file.
+#
+#     :sess: TODO
+#     :filename: TODO
+#     :returns: TODO
+#
+#     """
+#     other = dict ()
+#     # file name suffix check
+#     if filename [-4:] != '.npz':
+#         filename = filename + '.npz'
+#     if not os.path.exists (filename):
+#         raise ValueError (filename + ' not exists')
+#
+#     tv = dict ([(str(v.name), v) for v in tf.compat.v1.trainable_variables ()])
+#     for k, d in np.load (filename).items ():
+#         if k in tv:
+#             print ('restoring ' + k)
+#             tf.compat.v1.assign (tv[k], d)
+#         else:
+#             other [k] = d
+#
+#     return other
 

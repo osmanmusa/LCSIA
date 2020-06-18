@@ -22,6 +22,8 @@ import utils.prob as problem
 import utils.data as data
 import utils.train as train
 
+import utils.DataSet as DataSet
+
 import numpy as np
 import tensorflow as tf
 try :
@@ -47,11 +49,21 @@ def setup_model(config , **kwargs) :
 
     if config.net == 'LAMP' :
         """LAMP"""
-        config.model = ("LAMP_T{T}_lam{lam}_{untiedf}_{coordf}_{exp_id}"
-                        .format (T=config.T, lam=config.lam, untiedf=untiedf,
+        config.model = ("LAMP_T{T}_{shrink_name}_{untiedf}_{coordf}_{exp_id}"
+                        .format (T=config.T, shrink_name=config.shrink_name, untiedf=untiedf,
                                  coordf=coordf, exp_id=config.exp_id))
         from models.LAMP import LAMP
-        model = LAMP (kwargs['A'], T=config.T, lam=config.lam,
+        model = LAMP (kwargs['A'], T=config.T, shrink_name=config.shrink_name,
+                      untied=config.untied, coord=config.coord,
+                      scope=config.scope)
+
+    if config.net == 'LITA' :
+        """LITA"""
+        config.model = ("LITA_T{T}_{shrink_name}_{untiedf}_{coordf}_{exp_id}"
+                        .format (T=config.T, shrink_name=config.shrink_name, untiedf=untiedf,
+                                 coordf=coordf, exp_id=config.exp_id))
+        from models.LITA import LITA
+        model = LITA (kwargs['A'], T=config.T, shrink_name=config.shrink_name,
                       untied=config.untied, coord=config.coord,
                       scope=config.scope)
 
@@ -278,36 +290,59 @@ def run_sc_train(config) :
     """Set up model."""
     model = setup_model (config, A=p.A)
 
+    # Create target Directory if don't exist
+    dirName = config.modelfn
+    if not os.path.exists(dirName):
+        os.mkdir(dirName)
+        print("Directory ", dirName, " Created ")
+    else:
+        print("Directory ", dirName, " already exists")
+
+    # model.weights[2].assign(2 * model.weights[2].numpy())
+    model.weights[2].assign((1234.0, 567.0))
+    model.weights[3].assign((1234.0, 567.0))
+
+    model.save_weights(config.modelfn + '/ckpt')
+    print('model weights ... ')
+    print(model.weights[2])
+    print(model.weights[3])
+
+    loaded_model = setup_model(config, A=p.A)
+    loaded_model.load_weights(config.modelfn + '/ckpt')
+
+    print('loaded model weights ... ')
+    print(loaded_model.weights[2])
+    print(loaded_model.weights[3])
+    # loaded_model.load_weights('ckpt')
+
+    # model.load_weights('my_model.h5', by_name=False, skip_mismatch=False)
+
     """Set up input."""
     config.SNR = np.inf if config.SNR == 'inf' else float (config.SNR)
-    y_, x_, y_val_, x_val_ = (
-        train.setup_input_sc (
-            config.test, p, config.tbs, config.vbs, config.fixval,
-            config.supp_prob, config.SNR, config.magdist, **config.distargs))
+
+    data_set = DataSet.DataSet(config, p)
 
     """Set up training."""
     stages = train.setup_sc_training (
-            model, y_, x_, y_val_, x_val_, None,
+            model, data_set, None,
             config.init_lr, config.decay_rate, config.lr_decay)
 
 
-    tfconfig = tf.ConfigProto (allow_soft_placement=True)
+    tfconfig = tf.compat.v1.ConfigProto (allow_soft_placement=True)
     tfconfig.gpu_options.allow_growth = True
-    with tf.Session (config=tfconfig) as sess:
-        # graph initialization
-        sess.run (tf.global_variables_initializer ())
 
-        # start timer
-        start = time.time ()
 
-        # train model
-        model.do_training(sess, stages, config.modelfn, config.scope,
-                          config.val_step, config.maxit, config.better_wait)
+    # start timer
+    start = time.time ()
 
-        # end timer
-        end = time.time ()
-        elapsed = end - start
-        print ("elapsed time of training = " + str (timedelta (seconds=elapsed)))
+    # train model
+    model.do_training(stages, data_set, config.modelfn, config.scope,
+                      config.val_step, config.maxit, config.better_wait)
+
+    # end timer
+    end = time.time ()
+    elapsed = end - start
+    print ("elapsed time of training = " + str (timedelta (seconds=elapsed)))
 
     # end of run_sc_train
 
@@ -714,6 +749,9 @@ def run_sc_test (config) :
     xt = np.load (config.xtest)
     """Set up input for testing."""
     config.SNR = np.inf if config.SNR == 'inf' else float (config.SNR)
+
+    data_set = DataSet.DataSet(config, p)
+
     input_, label_ = (
         train.setup_input_sc (config.test, p, xt.shape [1], None, False,
                               config.supp_prob, config.SNR,
@@ -724,13 +762,15 @@ def run_sc_test (config) :
     xhs_ = model.inference (input_, None)
 
     """Create session and initialize the graph."""
-    tfconfig = tf.ConfigProto (allow_soft_placement=True)
+    tfconfig = tf.compat.v1.ConfigProto (allow_soft_placement=True)
     tfconfig.gpu_options.allow_growth = True
-    with tf.Session (config=tfconfig) as sess:
+
+
+    with tf.compat.v1.Session (config=tfconfig) as sess:
         # graph initialization
-        sess.run (tf.global_variables_initializer ())
+        sess.run (tf.compat.v1.global_variables_initializer ())
         # load model
-        model.load_trainable_variables (sess , config.modelfn)
+        model.load_trainable_variables (config.modelfn)
 
         nmse_denom = np.sum (np.square (xt))
         supp_gt = xt != 0
@@ -1082,6 +1122,7 @@ def main ():
     config, _ = get_config()
     # set visible GPUs
     os.environ['CUDA_VISIBLE_DEVICES'] = config.gpu
+    # tf.compat.v1.disable_eager_execution()
 
     if config.test:
         run_test (config)

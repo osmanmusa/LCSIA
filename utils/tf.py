@@ -116,6 +116,7 @@ def shrink_lamp(r_, rvar_, lam_):
     # xhl0_  = tf.reduce_mean(tf.to_float(shrink>0), axis=0)
     # return xh_, xhl0_
 
+
 def hard_shrink(r_, tau_):
     """
     Implementation of hard thresholding neuron.

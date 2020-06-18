@@ -12,9 +12,8 @@ Implementation of Learned AMP model.
 
 import numpy as np
 import tensorflow as tf
-import utils.train
 
-from utils.tf import shrink_lamp
+import utils.shrinkage as shrinkage
 from models.LISTA_base import LISTA_base
 
 class LAMP (LISTA_base):
@@ -23,7 +22,7 @@ class LAMP (LISTA_base):
     Implementation of Learned AMP model.
     """
 
-    def __init__(self, A, T, lam, untied, coord, scope):
+    def __init__(self, A, T, shrink_name, untied, coord, scope):
         """
         :A      : Instance of Problem class, describing problem settings.
         :T      : Number of layers (depth) of this LISTA model.
@@ -37,9 +36,10 @@ class LAMP (LISTA_base):
         self._M   = self._A.shape [0]
         self._N   = self._A.shape [1]
 
-        self._lam = lam
-        if coord:
-            self._lam = np.ones ((self._N, 1), dtype=np.float32) * self._lam
+        self.denoise, self._theta = shrinkage.get_shrinkage_function(shrink_name)
+
+        # if coord:
+        #     self._theta = np.ones ((self._N, 1), dtype=np.float32) * self._theta
 
         self._scale = 1.001 * np.linalg.norm (A, ord=2)**2
 
@@ -65,32 +65,32 @@ class LAMP (LISTA_base):
 
         """
         Bs_   = []
-        lams_ = []
+        thetas_ = []
 
         B = (np.transpose (self._A) / self._scale).astype (np.float32)
 
-        with tf.variable_scope (self._scope, reuse=False) as vs:
+        with tf.compat.v1.variable_scope(self._scope, reuse=False) as vs:
             # constant
             self._kA_ = tf.constant (value=self._A, dtype=tf.float32)
 
             if not self._untied: # tied model
-                Bs_.append (tf.get_variable (name='B', dtype=tf.float32,
+                Bs_.append (tf.compat.v1.get_variable (name='B', dtype=tf.float32,
                                              initializer=B))
                 Bs_ = Bs_ * self._T
 
             for t in range (self._T):
-                lams_.append (tf.get_variable (name="lam_%d"%(t+1),
+                thetas_.append (tf.compat.v1.get_variable (name="theta_%d"%(t+1),
                                                dtype=tf.float32,
-                                               initializer=self._lam))
+                                               initializer=self._theta))
                 if self._untied: # untied model
-                    Bs_.append (tf.get_variable (name='B_%d'%(t+1),
+                    Bs_.append (tf.compat.v1.get_variable (name='B_%d'%(t+1),
                                                  dtype=tf.float32,
                                                  initializer=B))
 
         # Collection of all trainable variables in the model layer by layer.
         # We name it as `vars_in_layer` because we will use it in the manner:
         # vars_in_layer [t]
-        self.vars_in_layer = list (zip (Bs_, lams_))
+        self.vars_in_layer = list (zip (Bs_, thetas_))
 
 
     def inference (self, y_, x0_=None, return_recon=False):
@@ -98,8 +98,10 @@ class LAMP (LISTA_base):
         if return_recon:
             yhs_  = [] # collection of the reconstructed signals
 
+        # initialization
+        batch_size = tf.shape(y_)[-1]
+        dxdr_ = tf.zeros (shape=(1, batch_size), dtype=tf.float32)
         if x0_ is None:
-            batch_size = tf.shape (y_) [-1]
             xh_ = tf.zeros (shape=(self._N, batch_size), dtype=tf.float32)
         else:
             xh_ = x0_
@@ -109,22 +111,21 @@ class LAMP (LISTA_base):
         NOverM   = tf.constant (float(self._N)/self._M, dtype=tf.float32)
         vt_ = tf.zeros_like (y_, dtype=tf.float32)
 
-        with tf.variable_scope (self._scope, reuse=True) as vs:
+        with tf.compat.v1.variable_scope(self._scope, reuse=True) as vs:
             for t in range (self._T):
-                B_, lam_ = self.vars_in_layer [t]
+                B_, theta_ = self.vars_in_layer [t]
 
                 yh_ = tf.matmul (self._kA_, xh_)
                 if return_recon:
                     yhs_.append (yh_)
 
-                xhl0_ = tf.reduce_mean (tf.to_float (tf.abs (xh_)>0), axis=0)
-                bt_   = xhl0_ * NOverM
+                bt_   = dxdr_ * NOverM
 
                 vt_   = y_ - yh_ + bt_ * vt_
                 rvar_ = tf.reduce_sum (tf.square (vt_), axis=0) * OneOverM
                 rh_ = xh_ + tf.matmul(B_, vt_)
 
-                xh_ = shrink_lamp (rh_, rvar_, lam_)
+                (xh_,dxdr_)  = self.denoise(rh_, rvar_, theta_)
                 xhs_.append (xh_)
 
             if return_recon:
@@ -161,4 +162,3 @@ class LAMP (LISTA_base):
         #     xh_, xhl0_ = eta( rh_ , rvar_ , lam_ )
         #     self.xhs_.append (xh_)
         #     self.layers.append( ('LAMP T={}'.format(t+1), xh_, var_list ) )
-
