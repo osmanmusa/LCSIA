@@ -71,8 +71,8 @@ class Problem(object):
             SNR = self.SNR
         y   = np.matmul (self.A, x)
 
-        M, N = p.A.shape
-        noise_var = p.pnz * N / M * np.pow(10., -SNR / 10.)
+        M, N = self.A.shape
+        noise_var = self.pnz * N / M * np.power(10., -SNR / 10.)
 
         noise_std = np.sqrt(noise_var)
 
